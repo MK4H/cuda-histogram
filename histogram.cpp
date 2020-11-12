@@ -26,8 +26,13 @@ std::unique_ptr<IHistogramAlgorithm<T, RES>> getAlgorithm(const std::string& alg
 	algorithms["serial"] = std::make_unique<SerialHistogramAlgorithm<T, RES>>();
 
 	// PLACE ADDITIONAL ALGORITHMS HERE ...
-	
-	
+
+	algorithms["bin_parallel"] = std::make_unique<CudaBinParallelAlgorithm<T,RES>>();
+	algorithms["atomics"] = std::make_unique<CudaAtomicsAlgorithm<T,RES>>();
+	algorithms["privatized"] = std::make_unique<CudaPrivatizedAlgorithm<T,RES>>();
+	algorithms["aggregated"] = std::make_unique<CudaAggregatedAlgorithm<T,RES>>();
+	algorithms["privatizedAggregated"] = std::make_unique<CudaPrivatizedAggregatedAlgorithm<T,RES>>();
+
 	auto it = algorithms.find(algoName);
 	if (it == algorithms.end()) {
 		throw (bpp::RuntimeError() << "Unkown algorithm '" << algoName << "'.");
@@ -72,7 +77,7 @@ void saveResults(const std::string& fileName, const std::vector<RES>& result, T 
 	bpp::File file(fileName);
 	file.open();
 	bpp::TextWriter writer(file, "\n", "\t");
-	
+
 	for (std::size_t i = 0; i < result.size(); ++i) {
 		writer.writeToken(i+fromValue);
 		writer.writeToken(result[i]);
@@ -181,7 +186,7 @@ int main(int argc, char* argv[])
 		args.registerArg<bpp::ProgramArguments::ArgString>("algorithm", "Which algorithm is to be tested.", false, "serial");
 		args.registerArg<bpp::ProgramArguments::ArgString>("save", "Path to a file to which the histogram is saved", false);
 		args.registerArg<bpp::ProgramArguments::ArgBool>("verify", "Results will be automatically verified using serial algorithm as baseline.");
-		
+
 		args.registerArg<bpp::ProgramArguments::ArgInt>("fromValue", "Ordinal value of the first character in histogram.", false, 0, 0, 255);
 		args.registerArg<bpp::ProgramArguments::ArgInt>("toValue", "Ordinal value of the last character in histogram.", false, 127, 0, 255);
 		args.registerArg<bpp::ProgramArguments::ArgInt>("repeatInput", "Enlarge data input by loading input file multiple times.", false, 1, 1);
