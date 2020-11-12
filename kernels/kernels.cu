@@ -60,9 +60,18 @@ __global__ void privatized(const T* data, RES N, RES* result, T fromValue, T toV
 	}
 
 	__syncthreads();
+	// Aggregate the resutls into the first histogram copy
+	// by halfing the number of unaggregated copies each iteration
+	for (int i = copiesPerBlock / 2; i >= 1; i /= 2) {
+		int distToSource = histSize * i;
+		for (int t = threadIdx.x; t < (histSize * i); t += blockDim.x) {
+			hist[t] += hist[t + distToSource];
+		}
+		__syncthreads();
+	}
 
-	for (int i = threadIdx.x; i < histSize*copiesPerBlock; i += blockDim.x) {
-		atomicAdd(result + (i % histSize), hist[i]);
+	for (int i = threadIdx.x; i < histSize; i += blockDim.x) {
+		atomicAdd(result + i, hist[i]);
 	}
 }
 
@@ -104,9 +113,18 @@ __global__ void privatized_aggregated(const T* data, RES N, RES* result, T fromV
 	}
 
 	__syncthreads();
+	// Aggregate the resutls into the first histogram copy
+	// by halfing the number of unaggregated copies each iteration
+	for (int i = copiesPerBlock / 2; i >= 1; i /= 2) {
+		int distToSource = histSize * i;
+		for (int t = threadIdx.x; t < (histSize * i); t += blockDim.x) {
+			hist[t] += hist[t + distToSource];
+		}
+		__syncthreads();
+	}
 
-	for (int i = threadIdx.x; i < histSize*copiesPerBlock; i += blockDim.x) {
-		atomicAdd(result + (i % histSize), hist[i]);
+	for (int i = threadIdx.x; i < histSize; i += blockDim.x) {
+		atomicAdd(result + i, hist[i]);
 	}
 }
 
