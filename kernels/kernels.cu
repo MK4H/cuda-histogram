@@ -6,7 +6,7 @@
 #include <cstdint>
 
 template<typename T = std::uint8_t, typename RES = std::uint32_t>
-__global__ void bin_parallel(const T* data, RES N, RES* result, T fromValue, T toValue)
+__global__ void naive(const T* data, RES N, RES* result, T fromValue, T toValue)
 {
 	auto idx = threadIdx.x + blockIdx.x * blockDim.x;
 
@@ -24,7 +24,7 @@ __global__ void bin_parallel(const T* data, RES N, RES* result, T fromValue, T t
 }
 
 template<typename T = std::uint8_t, typename RES = std::uint32_t>
-__global__ void atomics(const T* data, RES N, RES* result, T fromValue, T toValue)
+__global__ void atomic(const T* data, RES N, RES* result, T fromValue, T toValue)
 {
 	auto idx = threadIdx.x + blockIdx.x * blockDim.x;
 	if (idx < N) {
@@ -42,7 +42,8 @@ __global__ void privatized(const T* data, RES N, RES* result, T fromValue, T toV
 {
 	RES *hist = reinterpret_cast<RES*>(shared);
 	auto idx = threadIdx.x + blockIdx.x * blockDim.x;
-	const int histSize = toValue - fromValue + 1;
+	const int histValues = toValue - fromValue + 1;
+	const int histSize = histValues % 32 != 0 && 32 % histValues != 0 ? histValues : histValues + 1;
 
 	// Clear the shared memory
 	for (int i = threadIdx.x; i < histSize*copiesPerBlock; i += blockDim.x) {
@@ -51,7 +52,7 @@ __global__ void privatized(const T* data, RES N, RES* result, T fromValue, T toV
 
 	__syncthreads();
 
-	RES *histPart = hist + (histSize) * ((threadIdx.x * copiesPerBlock) / blockDim.x);
+	RES *histPart = hist + (histSize) * (threadIdx.x % copiesPerBlock);
 	if (idx < N) {
 		T value = data[idx];
 		if (value >= fromValue && value <= toValue) {
@@ -62,15 +63,11 @@ __global__ void privatized(const T* data, RES N, RES* result, T fromValue, T toV
 	__syncthreads();
 	// Aggregate the resutls into the first histogram copy
 	// by halfing the number of unaggregated copies each iteration
-	for (int i = copiesPerBlock / 2; i >= 1; i /= 2) {
-		int distToSource = histSize * i;
-		for (int t = threadIdx.x; t < (histSize * i); t += blockDim.x) {
-			hist[t] += hist[t + distToSource];
+	for (int i = threadIdx.x; i < histValues; i += blockDim.x) {
+		for (int copy = 1; copy < copiesPerBlock; ++copy) {
+			hist[i] += hist[copy*histSize + i];
 		}
-		__syncthreads();
-	}
 
-	for (int i = threadIdx.x; i < histSize; i += blockDim.x) {
 		atomicAdd(result + i, hist[i]);
 	}
 }
@@ -89,13 +86,14 @@ __global__ void aggregated(const T* data, RES N, RES* result, T fromValue, T toV
 }
 
 template<typename T = std::uint8_t, typename RES = std::uint32_t>
-__global__ void privatized_aggregated(const T* data, RES N, RES* result, T fromValue, T toValue, const int copiesPerBlock, const int itemsPerThread)
+__global__ void atomic_shm(const T* data, RES N, RES* result, T fromValue, T toValue, const int copiesPerBlock, const int itemsPerThread)
 {
 	RES *hist = reinterpret_cast<RES*>(shared);
 	auto start = threadIdx.x + blockIdx.x * blockDim.x * itemsPerThread;
 	auto end = min(threadIdx.x + (blockIdx.x + 1) * blockDim.x * itemsPerThread, N);
 
-	const int histSize = toValue - fromValue + 1;
+	const int histValues = toValue - fromValue + 1;
+	const int histSize = histValues % 32 != 0 && 32 % histValues != 0 ? histValues : histValues + 1;
 
 	// Clear the shared memory
 	for (int i = threadIdx.x; i < histSize*copiesPerBlock; i += blockDim.x) {
@@ -104,7 +102,7 @@ __global__ void privatized_aggregated(const T* data, RES N, RES* result, T fromV
 
 	__syncthreads();
 
-	RES *histPart = hist + (histSize) * ((threadIdx.x * copiesPerBlock) / blockDim.x);
+	RES *histPart = hist + (histSize) * (threadIdx.x % copiesPerBlock);
 	for (int i = start; i < end; i += blockDim.x) {
 		T value = data[i];
 		if (value >= fromValue && value <= toValue) {
@@ -113,51 +111,42 @@ __global__ void privatized_aggregated(const T* data, RES N, RES* result, T fromV
 	}
 
 	__syncthreads();
+
 	// Aggregate the resutls into the first histogram copy
 	// by halfing the number of unaggregated copies each iteration
-	for (int i = copiesPerBlock / 2; i >= 1; i /= 2) {
-		int distToSource = histSize * i;
-		for (int t = threadIdx.x; t < (histSize * i); t += blockDim.x) {
-			hist[t] += hist[t + distToSource];
+	for (int i = threadIdx.x; i < histValues; i += blockDim.x) {
+		for (int copy = 1; copy < copiesPerBlock; ++copy) {
+			hist[i] += hist[copy*histSize + i];
 		}
-		__syncthreads();
-	}
 
-	for (int i = threadIdx.x; i < histSize; i += blockDim.x) {
 		atomicAdd(result + i, hist[i]);
 	}
 }
 
 template<typename T, typename RES>
-void run_bin_parallel(const T* data, std::size_t N, RES* result, T fromValue, T toValue){
-	constexpr unsigned int blockSize = 256;
-
+void run_naive(const T* data, std::size_t N, RES* result, T fromValue, T toValue, int blockSize){
 	const T numBins = toValue - fromValue;
 	const std::size_t numBlocks = (numBins / blockSize) + (numBins % blockSize == 0 ? 0 : 1);
-	bin_parallel<T,RES><<<numBlocks, blockSize>>>(data, (RES)N, result, fromValue, toValue);
+	naive<T,RES><<<numBlocks, blockSize>>>(data, (RES)N, result, fromValue, toValue);
 }
 
 template<typename T, typename RES>
-void run_atomics(const T* data, std::size_t N, RES* result, T fromValue, T toValue) {
-	constexpr unsigned int blockSize = 256;
+void run_atomic(const T* data, std::size_t N, RES* result, T fromValue, T toValue, int blockSize) {
 	const std::size_t numBlocks = (N / blockSize) + (N % blockSize == 0 ? 0 : 1);
-	atomics<T,RES><<<numBlocks, blockSize>>>(data, (RES)N, result, fromValue, toValue);
+	atomic<T,RES><<<numBlocks, blockSize>>>(data, (RES)N, result, fromValue, toValue);
 }
 
-/*
-* Nema cenu delat vice privatnich kopii, protoze do ty shared pameti pristupujou ty vlakna dost na random
-* takze ke kolizim nedojde tak casto a jenom tim pridavame pak kolize pri pristupu do globalni pameti
-*/
 template<typename T, typename RES>
 void run_privatized(const T* data, std::size_t N, RES* result, T fromValue, T toValue, int blockSize, int copiesPerBlock){
 	const std::size_t numBlocks = (N / blockSize) + (N % blockSize == 0 ? 0 : 1);
-	const std::size_t histSize = (toValue - fromValue + 1) * sizeof(RES);
+	const std::size_t histValues = toValue - fromValue + 1;
+	const std::size_t histSize = (histValues % 32 != 0 && 32 % histValues != 0 ? histValues : histValues + 1) * sizeof(RES);
 	privatized<T,RES><<<numBlocks, blockSize, histSize * copiesPerBlock>>>(data, (RES)N, result, fromValue, toValue, copiesPerBlock);
 }
 
 /*
-* Tohle je samo o sobe moc pomaly, protoze tam je bottleneck pristup do globalni pameti
-* takze jen o trosku rychlejsi nez atomic
+* By itself, this type of optimalization is just slightly faster than the atomic, as the bottleneck in the atomic solution
+* is access to global memory
 */
 template<typename T, typename RES>
 void run_aggregated(const T* data, std::size_t N, RES* result, T fromValue, T toValue, int blockSize, int itemsPerThread) {
@@ -172,15 +161,16 @@ void run_aggregated(const T* data, std::size_t N, RES* result, T fromValue, T to
 * oproti tomu pristup do shared se dela random
 */
 template<typename T, typename RES>
-void run_privatized_aggregated(const T* data, std::size_t N, RES* result, T fromValue, T toValue, int blockSize, int copiesPerBlock, int itemsPerThread) {
+void run_atomic_shm(const T* data, std::size_t N, RES* result, T fromValue, T toValue, int blockSize, int copiesPerBlock, int itemsPerThread) {
 	const int itemsPerBlock = blockSize * itemsPerThread;
 	const std::size_t numBlocks = (N / itemsPerBlock) + (N % itemsPerBlock == 0 ? 0 : 1);
-	const std::size_t histSize = (toValue - fromValue + 1) * sizeof(RES);
-	privatized_aggregated<T,RES><<<numBlocks, blockSize, histSize * copiesPerBlock>>>(data, (RES)N, result, fromValue, toValue, copiesPerBlock, itemsPerThread);
+	const std::size_t histValues = toValue - fromValue + 1;
+	const std::size_t histSize = (histValues % 32 != 0 && 32 % histValues != 0 ? histValues : histValues + 1) * sizeof(RES);
+	atomic_shm<T,RES><<<numBlocks, blockSize, histSize * copiesPerBlock>>>(data, (RES)N, result, fromValue, toValue, copiesPerBlock, itemsPerThread);
 }
 
-template void run_bin_parallel<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue);
-template void run_atomics<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue);
+template void run_naive<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize);
+template void run_atomic<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize);
 template void run_privatized<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize, int copiesPerBlock);
 template void run_aggregated<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize, int itemsPerThread);
-template void run_privatized_aggregated<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize, int copiesPerBlock, int itemsPerThread);
+template void run_atomic_shm<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize, int copiesPerBlock, int itemsPerThread);

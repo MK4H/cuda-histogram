@@ -5,10 +5,24 @@
 #include <cstdint>
 
 template<typename T, typename RES>
-void run_bin_parallel(const T* data, std::size_t N, RES* result, T fromValue, T toValue);
+void run_naive(
+    const T*    data,
+    std::size_t N,
+    RES*        result,
+    T           fromValue,
+    T           toValue,
+    int         blockSize
+);
 
 template<typename T, typename RES>
-void run_atomics(const T* data, std::size_t N, RES* result, T fromValue, T toValue);
+void run_atomic(
+    const T*    data,
+    std::size_t N,
+    RES*        result,
+    T           fromValue,
+    T           toValue,
+    int         blockSize
+);
 
 template<typename T, typename RES>
 void run_privatized(
@@ -33,7 +47,7 @@ void run_aggregated(
 );
 
 template<typename T, typename RES>
-void run_privatized_aggregated(
+void run_atomic_shm(
     const T*    data,
     std::size_t N,
     RES*        result,

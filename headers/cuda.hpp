@@ -21,6 +21,7 @@ protected:
 
 	T* dData;
 	RES* dResults;
+	int blockSize;
 public:
 	virtual void initialize(const T* data, std::size_t N, T fromValue, T toValue, bpp::ProgramArguments& args) override
 	{
@@ -30,7 +31,7 @@ public:
 
 		CUCH(cudaSetDevice(0));
 
-
+		blockSize = args.getArgInt("blockSize").getValue();
 		CUCH(cudaMalloc(&dData, mN * sizeof(T)));
 		CUCH(cudaMalloc(&dResults, this->mResult.size() * sizeof(RES)));
 	}
@@ -54,7 +55,7 @@ public:
 
 
 template<typename T = std::uint8_t, typename RES = std::uint32_t>
-class CudaBinParallelAlgorithm : public CudaHistogramAlgorithm<T, RES>
+class CudaNaiveAlgorithm : public CudaHistogramAlgorithm<T, RES>
 {
 public:
 	virtual void run() override
@@ -62,13 +63,13 @@ public:
 		if (!this->mData || !this->mN) return;
 
 		// Execute
-		run_bin_parallel(this->dData, this->mN, this->dResults, this->mFromValue, this->mToValue);
+		run_naive(this->dData, this->mN, this->dResults, this->mFromValue, this->mToValue, this->blockSize);
 		CUCH(cudaDeviceSynchronize());
 	}
 };
 
 template<typename T = std::uint8_t, typename RES = std::uint32_t>
-class CudaAtomicsAlgorithm : public CudaHistogramAlgorithm<T, RES>
+class CudaAtomicAlgorithm : public CudaHistogramAlgorithm<T, RES>
 {
 public:
 	virtual void run() override
@@ -76,7 +77,7 @@ public:
 		if (!this->mData || !this->mN) return;
 
 		// Execute
-		run_atomics(this->dData, this->mN, this->dResults, this->mFromValue, this->mToValue);
+		run_atomic(this->dData, this->mN, this->dResults, this->mFromValue, this->mToValue, this->blockSize);
 		CUCH(cudaDeviceSynchronize());
 	}
 };
@@ -88,7 +89,6 @@ public:
 	virtual void initialize(const T* data, std::size_t N, T fromValue, T toValue, bpp::ProgramArguments& args) override
 	{
 		CudaHistogramAlgorithm<T,RES>::initialize(data, N, fromValue, toValue, args);
-		blockSize = args.getArgInt("blockSize").getValue();
 		copiesPerBlock = args.getArgInt("privCopies").getValue();
 	}
 
@@ -103,13 +103,12 @@ public:
 			this->dResults,
 			this->mFromValue,
 			this->mToValue,
-			blockSize,
+			this->blockSize,
 			copiesPerBlock
 		);
 		CUCH(cudaDeviceSynchronize());
 	}
 private:
-	int blockSize;
 	int copiesPerBlock;
 };
 
@@ -120,7 +119,6 @@ public:
 	virtual void initialize(const T* data, std::size_t N, T fromValue, T toValue, bpp::ProgramArguments& args) override
 	{
 		CudaHistogramAlgorithm<T,RES>::initialize(data, N, fromValue, toValue, args);
-		blockSize = args.getArgInt("blockSize").getValue();
 		itemsPerThread = args.getArgInt("itemsPerThread").getValue();
 	}
 
@@ -135,24 +133,22 @@ public:
 			this->dResults,
 			this->mFromValue,
 			this->mToValue,
-			blockSize,
+			this->blockSize,
 			itemsPerThread
 		);
 		CUCH(cudaDeviceSynchronize());
 	}
 private:
-	int blockSize;
 	int itemsPerThread;
 };
 
 template<typename T = std::uint8_t, typename RES = std::uint32_t>
-class CudaPrivatizedAggregatedAlgorithm : public CudaHistogramAlgorithm<T, RES>
+class CudaAtomicShmAlgorithm : public CudaHistogramAlgorithm<T, RES>
 {
 public:
 	virtual void initialize(const T* data, std::size_t N, T fromValue, T toValue, bpp::ProgramArguments& args) override
 	{
 		CudaHistogramAlgorithm<T,RES>::initialize(data, N, fromValue, toValue, args);
-		blockSize = args.getArgInt("blockSize").getValue();
 		copiesPerBlock = args.getArgInt("privCopies").getValue();
 		itemsPerThread = args.getArgInt("itemsPerThread").getValue();
 	}
@@ -162,20 +158,19 @@ public:
 		if (!this->mData || !this->mN) return;
 
 		// Execute
-		run_privatized_aggregated(
+		run_atomic_shm(
 			this->dData,
 			this->mN,
 			this->dResults,
 			this->mFromValue,
 			this->mToValue,
-			blockSize,
+			this->blockSize,
 			copiesPerBlock,
 			itemsPerThread
 		);
 		CUCH(cudaDeviceSynchronize());
 	}
 private:
-	int blockSize;
 	int copiesPerBlock;
 	int itemsPerThread;
 };

@@ -27,11 +27,11 @@ std::unique_ptr<IHistogramAlgorithm<T, RES>> getAlgorithm(const std::string& alg
 
 	// PLACE ADDITIONAL ALGORITHMS HERE ...
 
-	algorithms["bin_parallel"] = std::make_unique<CudaBinParallelAlgorithm<T,RES>>();
-	algorithms["atomics"] = std::make_unique<CudaAtomicsAlgorithm<T,RES>>();
+	algorithms["naive"] = std::make_unique<CudaNaiveAlgorithm<T,RES>>();
+	algorithms["atomic"] = std::make_unique<CudaAtomicAlgorithm<T,RES>>();
 	algorithms["privatized"] = std::make_unique<CudaPrivatizedAlgorithm<T,RES>>();
 	algorithms["aggregated"] = std::make_unique<CudaAggregatedAlgorithm<T,RES>>();
-	algorithms["privatizedAggregated"] = std::make_unique<CudaPrivatizedAggregatedAlgorithm<T,RES>>();
+	algorithms["atomic_shm"] = std::make_unique<CudaAtomicShmAlgorithm<T,RES>>();
 
 	auto it = algorithms.find(algoName);
 	if (it == algorithms.end()) {
