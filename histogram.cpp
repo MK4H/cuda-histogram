@@ -32,6 +32,8 @@ std::unique_ptr<IHistogramAlgorithm<T, RES>> getAlgorithm(const std::string& alg
 	algorithms["privatized"] = std::make_unique<CudaPrivatizedAlgorithm<T,RES>>();
 	algorithms["aggregated"] = std::make_unique<CudaAggregatedAlgorithm<T,RES>>();
 	algorithms["atomic_shm"] = std::make_unique<CudaAtomicShmAlgorithm<T,RES>>();
+	algorithms["overlap"] = std::make_unique<CudaOverlapAlgorithm<T,RES>>();
+	algorithms["final"] = std::make_unique<CudaFinalAlgorithm<T,RES>>();
 
 	auto it = algorithms.find(algoName);
 	if (it == algorithms.end()) {
@@ -191,9 +193,11 @@ int main(int argc, char* argv[])
 		args.registerArg<bpp::ProgramArguments::ArgInt>("toValue", "Ordinal value of the last character in histogram.", false, 127, 0, 255);
 		args.registerArg<bpp::ProgramArguments::ArgInt>("repeatInput", "Enlarge data input by loading input file multiple times.", false, 1, 1);
 
-		args.registerArg<bpp::ProgramArguments::ArgInt>("blockSize", "CUDA block size (threads in a block).", false, 128, 1, 4096);
-		args.registerArg<bpp::ProgramArguments::ArgInt>("itemsPerThread", "How many items are processed by one thread.", false, 128, 1, 4096);
-		args.registerArg<bpp::ProgramArguments::ArgInt>("privCopies", "Number of privatized copies.", false, 1, 1, 4096);
+		args.registerArg<bpp::ProgramArguments::ArgInt>("blockSize", "CUDA block size (threads in a block).", false, 256, 1, 4096);
+		args.registerArg<bpp::ProgramArguments::ArgInt>("itemsPerThread", "How many items are processed by one thread.", false, 64, 1, 4096);
+		args.registerArg<bpp::ProgramArguments::ArgInt>("privCopies", "Number of privatized copies.", false, 8, 1, 4096);
+		args.registerArg<bpp::ProgramArguments::ArgInt>("chunkSize", "Number of input data items transfered in a single operation.", false, 4194304, 1, std::numeric_limits<bpp::ProgramArguments::ArgInt::value_t>::max());
+		args.registerArg<bpp::ProgramArguments::ArgBool>("pinned", "If pinned memory should be used.");
 
 		// Process the arguments ...
 		args.process(argc, argv);
