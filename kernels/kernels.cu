@@ -35,12 +35,13 @@ __global__ void atomic(const T* data, RES N, RES* result, T fromValue, T toValue
 	}
 }
 
-extern __shared__ int shared[];
+
 
 template<typename T = std::uint8_t, typename RES = std::uint32_t>
 __global__ void privatized(const T* data, RES N, RES* result, T fromValue, T toValue, const int copiesPerBlock)
 {
-	RES *hist = reinterpret_cast<RES*>(shared);
+	extern __shared__ RES hist[];
+
 	auto idx = threadIdx.x + blockIdx.x * blockDim.x;
 	const int histValues = toValue - fromValue + 1;
 	const int histSize = histValues % 32 != 0 && 32 % histValues != 0 ? histValues : histValues + 1;
@@ -62,7 +63,6 @@ __global__ void privatized(const T* data, RES N, RES* result, T fromValue, T toV
 
 	__syncthreads();
 	// Aggregate the resutls into the first histogram copy
-	// by halfing the number of unaggregated copies each iteration
 	for (int i = threadIdx.x; i < histValues; i += blockDim.x) {
 		for (int copy = 1; copy < copiesPerBlock; ++copy) {
 			hist[i] += hist[copy*histSize + i];
@@ -88,7 +88,8 @@ __global__ void aggregated(const T* data, RES N, RES* result, T fromValue, T toV
 template<typename T = std::uint8_t, typename RES = std::uint32_t>
 __global__ void atomic_shm(const T* data, RES N, RES* result, T fromValue, T toValue, const int copiesPerBlock, const int itemsPerThread)
 {
-	RES *hist = reinterpret_cast<RES*>(shared);
+	extern __shared__ RES hist[];
+
 	auto start = threadIdx.x + blockIdx.x * blockDim.x * itemsPerThread;
 	auto end = min(threadIdx.x + (blockIdx.x + 1) * blockDim.x * itemsPerThread, N);
 
@@ -113,7 +114,6 @@ __global__ void atomic_shm(const T* data, RES N, RES* result, T fromValue, T toV
 	__syncthreads();
 
 	// Aggregate the resutls into the first histogram copy
-	// by halfing the number of unaggregated copies each iteration
 	for (int i = threadIdx.x; i < histValues; i += blockDim.x) {
 		for (int copy = 1; copy < copiesPerBlock; ++copy) {
 			hist[i] += hist[copy*histSize + i];
@@ -155,11 +155,6 @@ void run_aggregated(const T* data, std::size_t N, RES* result, T fromValue, T to
 	aggregated<T,RES><<<numBlocks, blockSize>>>(data, (RES)N, result, fromValue, toValue, itemsPerThread);
 }
 
-/*
-* Samozrejme nejrychlejsi, optimum je 128 itemsPerThread, stejne jako v privatized nema cenu delat vice kopii, jenom
-* tim pridavame praci a kolize pri pristupu do globalni pameti, protoze ten se dela dost sekvencne
-* oproti tomu pristup do shared se dela random
-*/
 template<typename T, typename RES>
 void run_atomic_shm(const T* data, std::size_t N, RES* result, T fromValue, T toValue, int blockSize, int copiesPerBlock, int itemsPerThread) {
 	const int itemsPerBlock = blockSize * itemsPerThread;
