@@ -11,6 +11,7 @@
 #include <vector>
 #include <cstdint>
 #include <algorithm>
+#include <vector>
 
 
 template<typename T = std::uint8_t, typename RES = std::uint32_t>
@@ -27,6 +28,7 @@ protected:
 	int copiesPerBlock;
 	int itemsPerThread;
 	int chunkSize;
+	int numStreams;
 	bool pinned;
 public:
 	virtual void initialize(const T* data, std::size_t N, T fromValue, T toValue, bpp::ProgramArguments& args) override
@@ -39,6 +41,7 @@ public:
 		copiesPerBlock = args.getArgInt("privCopies").getValue();
 		itemsPerThread = args.getArgInt("itemsPerThread").getValue();
 		chunkSize = args.getArgInt("chunkSize").getValue();
+		numStreams = args.getArgInt("numStreams").getValue();
 		pinned = args.getArgBool("pinned").getValue();
 	}
 };
@@ -171,16 +174,31 @@ public:
 	}
 };
 
+/**
+ * Allocates <numStreams> CUDA streams and distributes the chunks to the streams
+ * in round robin fashion.
+ *
+ * Device input data buffer size is defined using the knowledge that at most
+ * <numStreams> chunks will be processed at any point in time. So for each
+ * stream there is a piece of memory of size <chunkSize>.
+ *
 
+ */
 template<typename T = std::uint8_t, typename RES = std::uint32_t>
 class CudaOverlapAlgorithm : public CudaHistogramAlgorithm<T, RES>
 {
-const T* hostData;
+private:
+	const T* hostData;
+	std::size_t numChunks;
+
+	std::vector<cudaStream_t> streams;
 
 public:
 	virtual void initialize(const T* data, std::size_t N, T fromValue, T toValue, bpp::ProgramArguments& args) override
 	{
 		CudaHistogramAlgorithm<T, RES>::initialize(data, N, fromValue, toValue, args);
+
+		numChunks = this->mN / this->chunkSize + (this->mN % this->chunkSize == 0 ? 0 : 1) ;
 
 		CUCH(cudaSetDevice(0));
 		if (this->pinned) {
@@ -192,8 +210,13 @@ public:
 		else {
 			hostData = this->mData;
 		}
-		CUCH(cudaMalloc(&this->dData, 2 * this->chunkSize * sizeof(T)));
+		CUCH(cudaMalloc(&this->dData, std::min(static_cast<std::size_t>(this->numStreams), numChunks) * this->chunkSize * sizeof(T)));
 		CUCH(cudaMalloc(&this->dResults, this->mResult.size() * sizeof(RES)));
+
+		streams = std::vector<cudaStream_t>(this->numStreams);
+		for (int i = 0; i < this->numStreams; ++i) {
+			CUCH(cudaStreamCreate(&streams[i]));
+		}
 	}
 
 	virtual void prepare() override
@@ -207,37 +230,26 @@ public:
 	{
 		if (!this->mData || !this->mN) return;
 
-		const std::size_t numChunks = this->mN / this->chunkSize + (this->mN % this->chunkSize == 0 ? 0 : 1) ;
-		for (std::size_t chunk = 0; chunk < numChunks - 1; ++chunk) {
+		std::size_t itemsToProcess = this->mN;
+		for (std::size_t chunk = 0; chunk < numChunks; ++chunk, itemsToProcess -= this->chunkSize) {
+			auto dDataBuffer = this->dData + ((chunk % this->numStreams) * this->chunkSize);
+			auto numItems = std::min(static_cast<std::size_t>(this->chunkSize), itemsToProcess);
+			auto stream = streams[chunk % this->numStreams];
 			// Copy data chunk
-			CUCH(cudaMemcpy(this->dData + ((chunk % 2) * this->chunkSize), hostData + (chunk * this->chunkSize), this->chunkSize * sizeof(T), cudaMemcpyHostToDevice));
+			CUCH(cudaMemcpyAsync(dDataBuffer, hostData + (chunk * this->chunkSize), numItems * sizeof(T), cudaMemcpyHostToDevice, stream));
 			// Execute
 			run_atomic_shm(
-				this->dData + ((chunk % 2) * this->chunkSize),
-				this->chunkSize,
+				dDataBuffer,
+				numItems,
 				this->dResults,
 				this->mFromValue,
 				this->mToValue,
 				this->blockSize,
 				this->copiesPerBlock,
-				this->itemsPerThread
+				this->itemsPerThread,
+				stream
 			);
 		}
-		// Last chunk, possibly incomplete
-		// Copy data chunk
-		const std::size_t lastSize = this->mN - (numChunks - 1) * this->chunkSize;
-		CUCH(cudaMemcpy(this->dData + (((numChunks - 1) % 2) * this->chunkSize), hostData + ((numChunks - 1) * this->chunkSize), lastSize * sizeof(T), cudaMemcpyHostToDevice));
-		// Execute
-		run_atomic_shm(
-			this->dData + (((numChunks - 1) % 2) * this->chunkSize),
-			lastSize,
-			this->dResults,
-			this->mFromValue,
-			this->mToValue,
-			this->blockSize,
-			this->copiesPerBlock,
-			this->itemsPerThread
-		);
 
 		CUCH(cudaDeviceSynchronize());
 	}
@@ -245,6 +257,10 @@ public:
 	virtual void finalize() override
 	{
 		CUCH(cudaMemcpy(this->mResult.data(), this->dResults, this->mResult.size() * sizeof(RES), cudaMemcpyDeviceToHost));
+
+		for (int i = 0; i < this->numStreams; ++i) {
+			CUCH(cudaStreamDestroy(streams[i]));
+		}
 
 		CUCH(cudaFree(this->dData));
 		CUCH(cudaFree(this->dResults));

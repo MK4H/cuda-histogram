@@ -197,6 +197,7 @@ int main(int argc, char* argv[])
 		args.registerArg<bpp::ProgramArguments::ArgInt>("itemsPerThread", "How many items are processed by one thread.", false, 64, 1, 4096);
 		args.registerArg<bpp::ProgramArguments::ArgInt>("privCopies", "Number of privatized copies.", false, 8, 1, 4096);
 		args.registerArg<bpp::ProgramArguments::ArgInt>("chunkSize", "Number of input data items transfered in a single operation.", false, 4194304, 1, std::numeric_limits<bpp::ProgramArguments::ArgInt::value_t>::max());
+		args.registerArg<bpp::ProgramArguments::ArgInt>("numStreams", "Number of CUDA streams used to dispatch chunk processing.", false, 32, 1, std::numeric_limits<bpp::ProgramArguments::ArgInt::value_t>::max());
 		args.registerArg<bpp::ProgramArguments::ArgBool>("pinned", "If pinned memory should be used.");
 
 		// Process the arguments ...

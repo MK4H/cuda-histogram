@@ -65,8 +65,9 @@ Preparations phase and output during the Finalization phase.
 
 Overlap solution postpones copying of the input data to Execution phase,
 so that the data transfer can be overlaped with kernel execution.
-The input data is transfered in chunks, running the CUDA kernel for each
-chunk separately and in parallel with the data transfer of the following chunk.
+Each chunk of input data is processed separately, possibly in parallel with other chunks.
+The number of chunks processed possibly in parallel is controlled by the commandline parameter
+numStreams, which controls the number of CUDA streams created for dispatching the chunk processing.
 
 The time to transfer the data is much larger than the time needed to process the data,
 as can be seen in the atomic_shm algorithm measurement, where the Preparations phase
@@ -89,7 +90,7 @@ As we can see from the measurment, this way of working with the buffer is far fr
 | naive | 483.871 ms | 156536 ms | 2.64712 ms |
 | atomic | 483.869 ms | 819.614 ms | 2.61886 ms |
 | atomic_shm | 489.821 ms | 6.34248 ms | 2.62634 ms |
-| overlap | 0.024907 ms | 235.085 ms | 196.242 ms |
+| overlap | 0.024907 ms | 198.713 ms | 195.745 ms |
 | final | 1160.67 ms | 424.686 ms | 128.244 ms |
 
 The measurements were done using the `measure.sh` script. If you

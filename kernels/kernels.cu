@@ -156,16 +156,16 @@ void run_aggregated(const T* data, std::size_t N, RES* result, T fromValue, T to
 }
 
 template<typename T, typename RES>
-void run_atomic_shm(const T* data, std::size_t N, RES* result, T fromValue, T toValue, int blockSize, int copiesPerBlock, int itemsPerThread) {
+void run_atomic_shm(const T* data, std::size_t N, RES* result, T fromValue, T toValue, int blockSize, int copiesPerBlock, int itemsPerThread, cudaStream_t stream) {
 	const int itemsPerBlock = blockSize * itemsPerThread;
 	const std::size_t numBlocks = (N / itemsPerBlock) + (N % itemsPerBlock == 0 ? 0 : 1);
 	const std::size_t histValues = toValue - fromValue + 1;
 	const std::size_t histSize = (histValues % 32 != 0 && 32 % histValues != 0 ? histValues : histValues + 1) * sizeof(RES);
-	atomic_shm<T,RES><<<numBlocks, blockSize, histSize * copiesPerBlock>>>(data, (RES)N, result, fromValue, toValue, copiesPerBlock, itemsPerThread);
+	atomic_shm<T,RES><<<numBlocks, blockSize, histSize * copiesPerBlock, stream>>>(data, (RES)N, result, fromValue, toValue, copiesPerBlock, itemsPerThread);
 }
 
 template void run_naive<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize);
 template void run_atomic<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize);
 template void run_privatized<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize, int copiesPerBlock);
 template void run_aggregated<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize, int itemsPerThread);
-template void run_atomic_shm<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize, int copiesPerBlock, int itemsPerThread);
+template void run_atomic_shm<std::uint8_t, std::uint32_t>(const std::uint8_t* data, std::size_t N, std::uint32_t* result, std::uint8_t fromValue, std::uint8_t toValue, int blockSize, int copiesPerBlock, int itemsPerThread, cudaStream_t stream);
